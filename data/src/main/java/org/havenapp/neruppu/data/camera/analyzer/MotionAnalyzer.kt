@@ -50,9 +50,26 @@ class ContextBatteryLevelProvider(private val context: Context) : BatteryLevelPr
 
 class MotionAnalyzer(
     private val onMotionDetected: (Double) -> Unit,
-    private val sensitivity: Int = 15,
+    sensitivity: Int = 15,
     private val batteryLevelProvider: BatteryLevelProvider = DefaultBatteryLevelProvider
 ) : ImageAnalysis.Analyzer {
+
+    /** Per-pixel difference threshold; can be changed while the camera runs. */
+    @Volatile
+    var sensitivity: Int = sensitivity
+
+    // Reading the battery level is a system call; doing it on every delivered
+    // frame (~30 fps) cost an IPC per frame just to decide to skip it.
+    private var cachedBatteryLevel = -1
+    private var lastBatteryCheck = 0L
+
+    private fun batteryLevel(now: Long): Int {
+        if (cachedBatteryLevel < 0 || now - lastBatteryCheck >= BATTERY_CHECK_INTERVAL_MS) {
+            cachedBatteryLevel = batteryLevelProvider.getBatteryLevel()
+            lastBatteryCheck = now
+        }
+        return cachedBatteryLevel
+    }
 
     internal var referenceBuffer: ByteArray? = null
     private var lastAnalysisTime = 0L
@@ -62,7 +79,7 @@ class MotionAnalyzer(
 
     override fun analyze(image: ImageProxy) {
         val now = System.currentTimeMillis()
-        val batteryLevel = batteryLevelProvider.getBatteryLevel()
+        val batteryLevel = batteryLevel(now)
         val currentTargetFps = when {
             batteryLevel >= 50 -> 5
             batteryLevel >= 20 -> 3
@@ -96,14 +113,15 @@ class MotionAnalyzer(
 
         var changedPixels = 0
         var totalSampled = 0
+        val threshold = sensitivity * 2
 
-        val xStep = width / outWidth
-        val yStep = height / outHeight
-
+        // Spread the sample grid over the whole frame. Integer steps
+        // (width / outWidth) left the right and bottom of the frame unsampled
+        // whenever the camera delivered a size that isn't a multiple of 320x240.
         for (y in 0 until outHeight) {
+            val srcY = (y * height) / outHeight
             for (x in 0 until outWidth) {
-                val srcX = x * xStep
-                val srcY = y * yStep
+                val srcX = (x * width) / outWidth
                 val srcIndex = srcY * rowStride + srcX * pixelStride
                 
                 if (srcIndex < buffer.capacity()) {
@@ -113,7 +131,7 @@ class MotionAnalyzer(
                     
                     val diff = abs(currentVal - referenceVal)
 
-                    if (diff > sensitivity * 2) {
+                    if (diff > threshold) {
                         changedPixels++
                     }
                     
@@ -153,5 +171,9 @@ class MotionAnalyzer(
                 }
             }
         }
+    }
+
+    companion object {
+        private const val BATTERY_CHECK_INTERVAL_MS = 60_000L
     }
 }

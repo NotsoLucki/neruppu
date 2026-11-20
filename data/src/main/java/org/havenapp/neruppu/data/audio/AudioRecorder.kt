@@ -44,25 +44,28 @@ class AudioRecorder(private val context: Context) {
     }
 
     suspend fun startRecording(): File? = withContext(Dispatchers.IO) {
+        val name = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US)
+            .format(System.currentTimeMillis())
+        val outputDir = File(context.filesDir, "audio_captures").apply { mkdirs() }
+        val file = File(outputDir, "$name.mp4")
+        // Assign before configuring, so a failure in prepare()/start() can
+        // still release the native recorder (which holds the microphone).
+        val recorder = createMediaRecorder()
         try {
-            val name = SimpleDateFormat("yyyy-MM-dd-HH-mm-ss-SSS", Locale.US)
-                .format(System.currentTimeMillis())
-            val outputDir = File(context.filesDir, "audio_captures").apply { mkdirs() }
-            val file = File(outputDir, "$name.mp4")
+            recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
+            recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            recorder.setOutputFile(file.absolutePath)
+            recorder.prepare()
+            recorder.start()
+            mediaRecorder = recorder
             currentOutputFile = file
-
-            mediaRecorder = createMediaRecorder().apply {
-                setAudioSource(MediaRecorder.AudioSource.MIC)
-                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                setOutputFile(file.absolutePath)
-                prepare()
-                start()
-            }
             Log.d("AudioRecorder", "Started recording to ${file.absolutePath}")
             file
         } catch (e: Exception) {
             Log.e("AudioRecorder", "Failed to start recording", e)
+            runCatching { recorder.release() }
+            file.delete()
             null
         }
     }
@@ -76,18 +79,26 @@ class AudioRecorder(private val context: Context) {
     }
 
     suspend fun stopRecording(): Uri? = withContext(Dispatchers.IO) {
+        val recorder = mediaRecorder ?: return@withContext null
+        val file = currentOutputFile
+        mediaRecorder = null
+        currentOutputFile = null
+        var stopped = false
         try {
-            mediaRecorder?.apply {
-                stop()
-                release()
-            }
-            mediaRecorder = null
-            val file = currentOutputFile
-            currentOutputFile = null
+            // stop() throws if no valid audio was captured (very short clip,
+            // or the mic was busy). release() must run either way.
+            recorder.stop()
+            stopped = true
             Log.d("AudioRecorder", "Stopped recording")
-            file?.let { Uri.fromFile(it) }
         } catch (e: Exception) {
             Log.e("AudioRecorder", "Failed to stop recording", e)
+        } finally {
+            runCatching { recorder.release() }
+        }
+        if (stopped) {
+            file?.let { Uri.fromFile(it) }
+        } else {
+            file?.delete()
             null
         }
     }

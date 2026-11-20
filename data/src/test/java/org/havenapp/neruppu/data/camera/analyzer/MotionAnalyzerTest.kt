@@ -191,4 +191,41 @@ class MotionAnalyzerTest {
         // Verify that the second image was closed (because it was skipped due to frame rate limiting)
         verify(exactly = 1) { image2.close() }
     }
+
+    @Test
+    fun `TC-CAM-10 Motion in the right and bottom of a 480x360 frame is detected`() {
+        var detectedLevel = 0.0
+        val analyzer = MotionAnalyzer(onMotionDetected = { detectedLevel = it })
+        val w = 480
+        val h = 360
+
+        analyzer.analyze(createMockImage(w, h, ByteArray(w * h) { 100.toByte() }))
+        Thread.sleep(210)
+
+        // Change only the bottom-right quadrant (x >= 320, y >= 240), which the
+        // old integer-step sampling never looked at.
+        val data2 = ByteArray(w * h) { 100.toByte() }
+        for (y in 240 until h) for (x in 320 until w) data2[y * w + x] = 220.toByte()
+        analyzer.analyze(createMockImage(w, h, data2))
+
+        assertTrue("Expected motion in bottom-right quadrant, level was $detectedLevel", detectedLevel > 5.0)
+    }
+
+    @Test
+    fun `TC-CAM-11 Battery level is not queried on every frame`() {
+        val batteryProvider = mockk<BatteryLevelProvider>()
+        every { batteryProvider.getBatteryLevel() } returns 80
+        val analyzer = MotionAnalyzer(onMotionDetected = {}, batteryLevelProvider = batteryProvider)
+
+        repeat(10) { analyzer.analyze(createMockImage(100, 100, ByteArray(10000))) }
+
+        verify(exactly = 1) { batteryProvider.getBatteryLevel() }
+    }
+
+    @Test
+    fun `TC-CAM-12 Sensitivity can be changed while running`() {
+        val analyzer = MotionAnalyzer(onMotionDetected = {}, sensitivity = 15)
+        analyzer.sensitivity = 5
+        assertEquals(5, analyzer.sensitivity)
+    }
 }

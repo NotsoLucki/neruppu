@@ -40,23 +40,29 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 
+/**
+ * Thread-safety: every change to camera state (bind, unbind, the fields below)
+ * happens on the main thread, inside the camera-provider callback, in the order
+ * the calls were made. That ordering is what keeps an unbind() followed quickly
+ * by bindCamera() from shutting down the executor the new analyzer uses.
+ * Fields read from other threads are @Volatile.
+ */
 class CameraManager(private val context: Context) {
 
-    private var imageCapture: ImageCapture? = null
+    @Volatile private var imageCapture: ImageCapture? = null
     private var imageAnalysis: ImageAnalysis? = null
-    private var motionAnalyzer: MotionAnalyzer? = null
-     
+    @Volatile private var motionAnalyzer: MotionAnalyzer? = null
+
     private val mutex = Mutex()
-    private var cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
-     
-    var isBound = false
-    var currentCameraSide: Boolean? = null
-    var currentLifecycleOwner: LifecycleOwner? = null
+    // Created per bind, shut down on unbind. Only touched on the main thread.
+    private var cameraExecutor: ExecutorService? = null
 
-    var sensitivityPref = 15f
-    private var onMotionDetectedCallback: ((Double) -> Unit)? = null
+    @Volatile var isBound = false
+    @Volatile var currentCameraSide: Boolean? = null
+    @Volatile var currentLifecycleOwner: LifecycleOwner? = null
 
-    
+    @Volatile var sensitivityPref = 15f
+    @Volatile private var onMotionDetectedCallback: ((Double) -> Unit)? = null
 
     fun getCameraProvider(callback: (ProcessCameraProvider) -> Unit) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
@@ -110,22 +116,25 @@ class CameraManager(private val context: Context) {
         sensitivity: Int = 15,
         onMotionDetected: (Double) -> Unit
     ) {
-        if (isBound && currentCameraSide == useFrontCamera && currentLifecycleOwner == lifecycleOwner) {
-            Log.d("CameraManager", "Camera already bound to service lifecycle. Keeping active.")
-            return
-        }
-        
-        sensitivityPref = sensitivity.toFloat()
-        onMotionDetectedCallback = onMotionDetected
-        
-        if (cameraExecutor.isShutdown) {
-            cameraExecutor = Executors.newSingleThreadExecutor()
-        }
-
         getCameraProvider { cameraProvider ->
+            // Runs on the main thread, after any earlier bind/unbind callbacks.
+            sensitivityPref = sensitivity.toFloat()
+            onMotionDetectedCallback = onMotionDetected
+
+            if (isBound && currentCameraSide == useFrontCamera && currentLifecycleOwner == lifecycleOwner) {
+                // Same camera: apply the new sensitivity without a rebind.
+                motionAnalyzer?.sensitivity = sensitivity
+                Log.d("CameraManager", "Camera already bound; sensitivity now $sensitivity")
+                return@getCameraProvider
+            }
+
             try {
                 cameraProvider.unbindAll()
-                
+                imageAnalysis?.clearAnalyzer()
+                cameraExecutor?.shutdown()
+                val executor = Executors.newSingleThreadExecutor()
+                cameraExecutor = executor
+
                 val useCases = mutableListOf<androidx.camera.core.UseCase>()
 
                 val resolutionSelector = ResolutionSelector.Builder()
@@ -137,7 +146,7 @@ class CameraManager(private val context: Context) {
                     )
                     .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                     .build()
-                
+
                 val analysisResolutionSelector = ResolutionSelector.Builder()
                     .setResolutionStrategy(
                         ResolutionStrategy(
@@ -148,25 +157,23 @@ class CameraManager(private val context: Context) {
                     .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                     .build()
 
-                imageCapture = ImageCapture.Builder()
+                val capture = ImageCapture.Builder()
                     .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                     .setResolutionSelector(resolutionSelector)
                     .build()
-                useCases.add(imageCapture!!)
+                useCases.add(capture)
 
-                motionAnalyzer = MotionAnalyzer(
-                    onMotionDetected,
+                val analyzer = MotionAnalyzer(
+                    { level -> onMotionDetectedCallback?.invoke(level) },
                     sensitivity,
                     ContextBatteryLevelProvider(context)
                 )
-                imageAnalysis = ImageAnalysis.Builder()
+                val analysis = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .setResolutionSelector(analysisResolutionSelector)
                     .build()
-                    .also {
-                        it.setAnalyzer(cameraExecutor, motionAnalyzer!!)
-                    }
-                useCases.add(imageAnalysis!!)
+                    .also { it.setAnalyzer(executor, analyzer) }
+                useCases.add(analysis)
 
                 val cameraSelector = if (useFrontCamera) {
                     CameraSelector.DEFAULT_FRONT_CAMERA
@@ -179,11 +186,14 @@ class CameraManager(private val context: Context) {
                     cameraSelector,
                     *useCases.toTypedArray()
                 )
-                
+
+                imageCapture = capture
+                imageAnalysis = analysis
+                motionAnalyzer = analyzer
                 isBound = true
                 currentCameraSide = useFrontCamera
                 currentLifecycleOwner = lifecycleOwner
-                Log.d("CameraManager", "CAMERA SYSTEM INITIALIZED BY SERVICE: Bound to $lifecycleOwner")
+                Log.d("CameraManager", "Camera bound to $lifecycleOwner")
             } catch (exc: Exception) {
                 Log.e("CameraManager", "CRITICAL: Service-side camera binding failed", exc)
                 isBound = false
@@ -203,14 +213,16 @@ class CameraManager(private val context: Context) {
             imageAnalysis = null
             motionAnalyzer?.cleanup()
             motionAnalyzer = null
-            cameraExecutor.shutdown()
+            cameraExecutor?.shutdown()
+            cameraExecutor = null
             Log.d("CameraManager", "Camera system released")
         }
     }
 
     fun release() {
-        if (!cameraExecutor.isShutdown) {
-            cameraExecutor.shutdown()
+        ContextCompat.getMainExecutor(context).execute {
+            cameraExecutor?.shutdown()
+            cameraExecutor = null
         }
     }
 }

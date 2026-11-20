@@ -33,21 +33,30 @@ class MatrixConfigStore @Inject constructor(
     private val alertTargetRepository: AlertTargetRepository
 ) : MatrixConfigRepository {
     private val prefs by lazy {
-        runCatching {
-            val masterKey = MasterKey.Builder(context)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build()
-            EncryptedSharedPreferences.create(
-                context,
-                "neruppu_matrix_config",
-                masterKey,
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            )
-        }.getOrElse {
-            Log.e("MatrixConfigStore", "Encrypted prefs failed, falling back to plain prefs", it)
-            context.getSharedPreferences("neruppu_matrix_fallback", Context.MODE_PRIVATE)
+        // Older versions fell back to a plaintext file when the Keystore failed.
+        // Remove any such copy so the access token is never left unencrypted.
+        context.deleteSharedPreferences(LEGACY_PLAINTEXT_FILE)
+        runCatching { createEncryptedPrefs() }.getOrElse { first ->
+            // Usually a Keystore entry that no longer matches the file (after a
+            // restore or OS upgrade). Drop the unreadable file and start clean;
+            // the user re-enters credentials. Never fall back to plaintext.
+            Log.e("MatrixConfigStore", "Encrypted prefs unreadable, resetting Matrix credentials", first)
+            context.deleteSharedPreferences(PREFS_FILE)
+            createEncryptedPrefs()
         }
+    }
+
+    private fun createEncryptedPrefs(): android.content.SharedPreferences {
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        return EncryptedSharedPreferences.create(
+            context,
+            PREFS_FILE,
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
     }
 
     override var homeserverUrl: String
@@ -76,6 +85,8 @@ class MatrixConfigStore @Inject constructor(
     }
 
     companion object {
+        private const val PREFS_FILE = "neruppu_matrix_config"
+        private const val LEGACY_PLAINTEXT_FILE = "neruppu_matrix_fallback"
         private const val KEY_HOMESERVER = "homeserver_url"
         private const val KEY_ROOM_ID = "room_id"
         private const val KEY_TOKEN = "access_token"
