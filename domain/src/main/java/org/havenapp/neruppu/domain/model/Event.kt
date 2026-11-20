@@ -44,5 +44,7 @@ enum class SensorType {
     LIGHT,
     BAROMETER,
     POWER,
-    CAMERA_MOTION
+    CAMERA_MOTION,
+    /** Guard lifecycle events, e.g. guarding stopped or resumed after a restart. */
+    SYSTEM
 }

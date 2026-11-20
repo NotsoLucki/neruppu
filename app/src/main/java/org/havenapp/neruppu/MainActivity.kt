@@ -26,6 +26,7 @@ import android.os.Bundle
 import android.os.IBinder
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -37,6 +38,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -50,6 +53,7 @@ import org.havenapp.neruppu.core.ui.theme.NeruppuOrange
 import org.havenapp.neruppu.core.ui.theme.NeruppuTheme
 import org.havenapp.neruppu.core.ui.theme.TextPrimary
 import org.havenapp.neruppu.core.ui.theme.TextSecondary
+import org.havenapp.neruppu.data.prefs.GuardPrefs
 import org.havenapp.neruppu.service.MonitoringService
 import org.havenapp.neruppu.ui.features.dashboard.DashboardScreen
 import org.havenapp.neruppu.ui.features.logs.LogsScreen
@@ -152,12 +156,16 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen().setKeepOnScreenCondition { !hasPermissions }
         super.onCreate(savedInstanceState)
+        // Android 15 (targetSdk 35) enforces edge-to-edge; opt in explicitly so
+        // system bar icons follow the theme and Scaffold insets do the padding.
+        enableEdgeToEdge()
 
         checkAndRequestPermissions()
 
         setContent {
             NeruppuTheme {
                 if (!hasPermissions) {
+                    Box(Modifier.fillMaxSize().safeDrawingPadding()) {
                     PermissionScreen(
                         onPermissionsGranted = {
                             hasPermissions = true
@@ -172,6 +180,7 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                     )
+                    }
                 } else {
                     MainAppScreen()
                 }
@@ -185,22 +194,24 @@ class MainActivity : ComponentActivity() {
         val logsViewModel: LogsViewModel = hiltViewModel()
 
         val context = LocalContext.current
-        val prefs = context.getSharedPreferences("neruppu_prefs", MODE_PRIVATE)
+        // Keys and defaults come from GuardPrefs, which MonitoringService reads too.
+        val prefs = GuardPrefs.prefs(context)
 
-        var motionEnabled by remember { mutableStateOf(prefs.getBoolean("motion_enabled", true)) }
-        var soundEnabled by remember { mutableStateOf(prefs.getBoolean("sound_enabled", true)) }
-        var lightEnabled by remember { mutableStateOf(prefs.getBoolean("light_enabled", false)) }
-        var motionSensitivity by remember { mutableStateOf(prefs.getFloat("motion_sensitivity", 0.5f)) }
-        var soundThreshold by remember { mutableStateOf(prefs.getFloat("sound_threshold", 0.6f)) }
-        var pushAlerts by remember { mutableStateOf(prefs.getBoolean("push_alerts", true)) }
-        var savePhotos by remember { mutableStateOf(prefs.getBoolean("save_photos", true)) }
-        var useFrontCamera by remember { mutableStateOf(prefs.getBoolean("use_front_camera", false)) }
+        var motionEnabled by remember { mutableStateOf(prefs.getBoolean(GuardPrefs.KEY_MOTION_ENABLED, GuardPrefs.DEFAULT_MOTION_ENABLED)) }
+        var soundEnabled by remember { mutableStateOf(prefs.getBoolean(GuardPrefs.KEY_SOUND_ENABLED, GuardPrefs.DEFAULT_SOUND_ENABLED)) }
+        var lightEnabled by remember { mutableStateOf(prefs.getBoolean(GuardPrefs.KEY_LIGHT_ENABLED, GuardPrefs.DEFAULT_LIGHT_ENABLED)) }
+        var motionSensitivity by remember { mutableStateOf(prefs.getFloat(GuardPrefs.KEY_MOTION_SENSITIVITY, GuardPrefs.DEFAULT_MOTION_SENSITIVITY)) }
+        var soundThreshold by remember { mutableStateOf(prefs.getFloat(GuardPrefs.KEY_SOUND_THRESHOLD, GuardPrefs.DEFAULT_SOUND_THRESHOLD)) }
+        var pushAlerts by remember { mutableStateOf(prefs.getBoolean(GuardPrefs.KEY_PUSH_ALERTS, GuardPrefs.DEFAULT_PUSH_ALERTS)) }
+        var savePhotos by remember { mutableStateOf(prefs.getBoolean(GuardPrefs.KEY_SAVE_PHOTOS, GuardPrefs.DEFAULT_SAVE_PHOTOS)) }
+        var useFrontCamera by remember { mutableStateOf(prefs.getBoolean(GuardPrefs.KEY_USE_FRONT_CAMERA, GuardPrefs.DEFAULT_USE_FRONT_CAMERA)) }
 
         Scaffold(
             bottomBar = {
                 NavigationBar(
+                    // No fixed height: NavigationBar adds the system navigation
+                    // inset itself, which a fixed 80dp would squeeze.
                     containerColor = BackgroundSecondary,
-                    modifier = Modifier.height(80.dp),
                     tonalElevation = 0.dp
                 ) {
                     NavigationBarItem(
@@ -245,7 +256,13 @@ class MainActivity : ComponentActivity() {
                 }
             }
         ) { paddingValues ->
-            Box(modifier = Modifier.padding(paddingValues)) {
+            // consumeWindowInsets stops the Logs/Settings screens' own Scaffolds
+            // from padding for the system bars a second time under edge-to-edge.
+            Box(
+                modifier = Modifier
+                    .padding(paddingValues)
+                    .consumeWindowInsets(paddingValues)
+            ) {
                 when (selectedTab) {
                     0 -> {
                         val service = monitoringService.value
@@ -282,9 +299,21 @@ class MainActivity : ComponentActivity() {
                             )
 
                             val lifecycleOwner = LocalLifecycleOwner.current
-                            DisposableEffect(lifecycleOwner) {
-                                service.setUiActive(true)
+                            // Preview is active only while the dashboard is on screen:
+                            // pressing Home must release the camera too, not just
+                            // switching tabs.
+                            DisposableEffect(lifecycleOwner, service) {
+                                val observer = LifecycleEventObserver { _, event ->
+                                    when (event) {
+                                        Lifecycle.Event.ON_START -> service.setUiActive(true)
+                                        Lifecycle.Event.ON_STOP -> service.setUiActive(false)
+                                        else -> Unit
+                                    }
+                                }
+                                // Delivers ON_START immediately if already started.
+                                lifecycleOwner.lifecycle.addObserver(observer)
                                 onDispose {
+                                    lifecycleOwner.lifecycle.removeObserver(observer)
                                     service.setUiActive(false)
                                 }
                             }
@@ -305,37 +334,37 @@ class MainActivity : ComponentActivity() {
                             motionEnabled = motionEnabled,
                             onMotionToggle = {
                                 motionEnabled = it
-                                prefs.edit().putBoolean("motion_enabled", it).apply()
+                                prefs.edit().putBoolean(GuardPrefs.KEY_MOTION_ENABLED, it).apply()
                             },
                             soundEnabled = soundEnabled,
                             onSoundToggle = {
                                 soundEnabled = it
-                                prefs.edit().putBoolean("sound_enabled", it).apply()
+                                prefs.edit().putBoolean(GuardPrefs.KEY_SOUND_ENABLED, it).apply()
                             },
                             lightEnabled = lightEnabled,
                             onLightToggle = {
                                 lightEnabled = it
-                                prefs.edit().putBoolean("light_enabled", it).apply()
+                                prefs.edit().putBoolean(GuardPrefs.KEY_LIGHT_ENABLED, it).apply()
                             },
                             motionSensitivity = motionSensitivity,
                             onMotionSensitivityChange = {
                                 motionSensitivity = it
-                                prefs.edit().putFloat("motion_sensitivity", it).apply()
+                                prefs.edit().putFloat(GuardPrefs.KEY_MOTION_SENSITIVITY, it).apply()
                             },
                             soundThreshold = soundThreshold,
                             onSoundThresholdChange = {
                                 soundThreshold = it
-                                prefs.edit().putFloat("sound_threshold", it).apply()
+                                prefs.edit().putFloat(GuardPrefs.KEY_SOUND_THRESHOLD, it).apply()
                             },
                             pushAlerts = pushAlerts,
                             onPushAlertsToggle = {
                                 pushAlerts = it
-                                prefs.edit().putBoolean("push_alerts", it).apply()
+                                prefs.edit().putBoolean(GuardPrefs.KEY_PUSH_ALERTS, it).apply()
                             },
                             savePhotos = savePhotos,
                             onSavePhotosToggle = {
                                 savePhotos = it
-                                prefs.edit().putBoolean("save_photos", it).apply()
+                                prefs.edit().putBoolean(GuardPrefs.KEY_SAVE_PHOTOS, it).apply()
                             }
                         )
                     }
