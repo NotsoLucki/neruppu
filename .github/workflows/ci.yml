@@ -32,7 +32,8 @@ jobs:
           ./gradlew :app:assembleDebug --stacktrace
 
       - name: Unit tests
-        run: ./gradlew testDebugUnitTest --continue
+        # :domain is a plain Kotlin module, so it has `test`, not testDebugUnitTest.
+        run: ./gradlew testDebugUnitTest :domain:test --continue
 
       - name: Upload test reports
         if: always()
