@@ -15,5 +15,6 @@
     <string name="dashboard_last_guarded_minutes">Last guarded %1$d m ago</string>
     <string name="nav_home">Home</string>
     <string name="nav_events">Events</string>
+    <string name="nav_media">Media</string>
     <string name="nav_settings">Settings</string>
 </resources>

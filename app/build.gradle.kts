@@ -83,6 +83,10 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    implementation(libs.androidx.material.icons.extended)
+    // Biometric unlock for recordings; fragment pinned >= 1.3 for the Activity Result APIs.
+    implementation(libs.androidx.biometric)
+    implementation(libs.androidx.fragment.ktx)
     implementation(libs.google.material)
 
     implementation(libs.androidx.camera.core)

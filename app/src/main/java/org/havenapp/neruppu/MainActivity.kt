@@ -25,7 +25,11 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.provider.Settings
-import androidx.activity.ComponentActivity
+import android.view.WindowManager
+import android.widget.Toast
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -33,6 +37,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -55,7 +60,10 @@ import org.havenapp.neruppu.core.ui.theme.TextPrimary
 import org.havenapp.neruppu.core.ui.theme.TextSecondary
 import org.havenapp.neruppu.data.prefs.GuardPrefs
 import org.havenapp.neruppu.service.MonitoringService
+import org.havenapp.neruppu.ui.components.LocalMediaLock
+import org.havenapp.neruppu.ui.components.MediaLock
 import org.havenapp.neruppu.ui.features.dashboard.DashboardScreen
+import org.havenapp.neruppu.ui.features.gallery.GalleryScreen
 import org.havenapp.neruppu.ui.features.logs.LogsScreen
 import org.havenapp.neruppu.ui.features.logs.LogsViewModel
 import org.havenapp.neruppu.ui.features.permission.PermissionScreen
@@ -63,11 +71,84 @@ import org.havenapp.neruppu.ui.features.settings.SettingsScreen
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+// FragmentActivity (a ComponentActivity) is required by androidx.biometric's BiometricPrompt.
+class MainActivity : FragmentActivity() {
 
     private val monitoringService = mutableStateOf<MonitoringService?>(null)
     private var isBound = false
     private var hasPermissions by mutableStateOf(false)
+
+    // --- Recordings lock -------------------------------------------------
+    // Photos and audio are shown only after biometric or device-credential
+    // auth, and lock again whenever the app leaves the screen.
+    private var mediaUnlocked by mutableStateOf(false)
+    private lateinit var biometricPrompt: BiometricPrompt
+
+    private val mediaAuthenticators: Int
+        get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
+        } else {
+            // Android 9-10 don't support STRONG combined with device credential.
+            BiometricManager.Authenticators.BIOMETRIC_WEAK or BiometricManager.Authenticators.DEVICE_CREDENTIAL
+        }
+
+    private fun createBiometricPrompt(): BiometricPrompt = BiometricPrompt(
+        this,
+        ContextCompat.getMainExecutor(this),
+        object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                // Keep recordings out of screenshots and the recents thumbnail while visible.
+                window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                mediaUnlocked = true
+            }
+
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                val userCancelled = errorCode == BiometricPrompt.ERROR_USER_CANCELED ||
+                    errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON ||
+                    errorCode == BiometricPrompt.ERROR_CANCELED
+                if (!userCancelled) {
+                    Toast.makeText(this@MainActivity, errString, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    )
+
+    private fun requestMediaUnlock() {
+        if (mediaUnlocked) return
+        val canAuth = BiometricManager.from(this).canAuthenticate(mediaAuthenticators)
+        if (canAuth != BiometricManager.BIOMETRIC_SUCCESS) {
+            // No screen lock means nothing to verify against: keep recordings
+            // locked and point the user at setting one up.
+            Toast.makeText(
+                this,
+                "Set up a screen lock (fingerprint, face, PIN or pattern) to view recordings.",
+                Toast.LENGTH_LONG
+            ).show()
+            runCatching { startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS)) }
+            return
+        }
+        val info = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Unlock recordings")
+            .setSubtitle("Confirm it's you to view photos and audio")
+            .setAllowedAuthenticators(mediaAuthenticators)
+            .build()
+        biometricPrompt.authenticate(info)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // FLAG_SECURE stays on while the app goes to the background, so the
+        // recents thumbnail is blank; drop it once we're visible and locked.
+        if (!mediaUnlocked) window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Relock whenever the app is no longer visible (Home, screen off,
+        // switching apps). The device-credential screen also triggers this,
+        // but its success callback arrives afterwards and unlocks again.
+        mediaUnlocked = false
+    }
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(className: ComponentName?, service: IBinder?) {
@@ -159,10 +240,14 @@ class MainActivity : ComponentActivity() {
         // Android 15 (targetSdk 35) enforces edge-to-edge; opt in explicitly so
         // system bar icons follow the theme and Scaffold insets do the padding.
         enableEdgeToEdge()
+        biometricPrompt = createBiometricPrompt()
 
         checkAndRequestPermissions()
 
         setContent {
+            CompositionLocalProvider(
+                LocalMediaLock provides MediaLock(isUnlocked = mediaUnlocked, requestUnlock = ::requestMediaUnlock)
+            ) {
             NeruppuTheme {
                 if (!hasPermissions) {
                     Box(Modifier.fillMaxSize().safeDrawingPadding()) {
@@ -184,6 +269,7 @@ class MainActivity : ComponentActivity() {
                 } else {
                     MainAppScreen()
                 }
+            }
             }
         }
     }
@@ -243,6 +329,19 @@ class MainActivity : ComponentActivity() {
                     NavigationBarItem(
                         selected = selectedTab == 2,
                         onClick = { selectedTab = 2 },
+                        icon = { Icon(Icons.Default.PhotoLibrary, contentDescription = null) },
+                        label = { Text(stringResource(R.string.nav_media), style = MaterialTheme.typography.labelMedium) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = TextPrimary,
+                            selectedTextColor = TextPrimary,
+                            unselectedIconColor = TextSecondary,
+                            unselectedTextColor = TextSecondary,
+                            indicatorColor = NeruppuOrange.copy(alpha = 0.1f)
+                        )
+                    )
+                    NavigationBarItem(
+                        selected = selectedTab == 3,
+                        onClick = { selectedTab = 3 },
                         icon = { Icon(Icons.Default.Settings, contentDescription = null) },
                         label = { Text(stringResource(R.string.nav_settings), style = MaterialTheme.typography.labelMedium) },
                         colors = NavigationBarItemDefaults.colors(
@@ -330,6 +429,9 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                     2 -> {
+                        GalleryScreen()
+                    }
+                    3 -> {
                         SettingsScreen(
                             motionEnabled = motionEnabled,
                             onMotionToggle = {

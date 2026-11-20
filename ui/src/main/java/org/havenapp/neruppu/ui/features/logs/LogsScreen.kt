@@ -85,6 +85,8 @@ import org.havenapp.neruppu.domain.model.Event
 import org.havenapp.neruppu.domain.model.SensorType
 import org.havenapp.neruppu.domain.model.UploadStatus
 import org.havenapp.neruppu.ui.R
+import org.havenapp.neruppu.ui.components.LocalMediaLock
+import org.havenapp.neruppu.ui.components.LockedMediaPlaceholder
 import org.havenapp.neruppu.ui.components.ScreenHeader
 import java.io.File
 import java.time.Instant
@@ -348,30 +350,37 @@ fun EventItem(event: Event) {
         if (expanded) {
             val mediaExists = event.mediaUri?.let { File(Uri.parse(it).path ?: "").exists() } ?: false
             val audioExists = event.audioUri?.let { File(Uri.parse(it).path ?: "").exists() } ?: false
+            val mediaLock = LocalMediaLock.current
 
-            if (mediaExists && event.mediaUri != null) {
-                Image(
-                    painter = rememberAsyncImagePainter(event.mediaUri),
-                    contentDescription = "Event Photo",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(200.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color.Black),
-                    contentScale = ContentScale.Fit
-                )
+            if (!mediaLock.isUnlocked && (event.mediaUri != null || event.audioUri != null)) {
+                // Photos and audio stay hidden until the user unlocks (same lock as the gallery).
+                LockedMediaPlaceholder(onUnlock = mediaLock.requestUnlock)
                 Spacer(modifier = Modifier.height(12.dp))
-            } else if (event.mediaUri != null && event.uploadStatus == UploadStatus.UPLOADED && !mediaExists) {
-                DeletedMediaPlaceholder("Image uploaded and deleted locally")
-                Spacer(modifier = Modifier.height(12.dp))
-            }
+            } else {
+                if (mediaExists && event.mediaUri != null) {
+                    Image(
+                        painter = rememberAsyncImagePainter(event.mediaUri),
+                        contentDescription = "Event Photo",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(200.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color.Black),
+                        contentScale = ContentScale.Fit
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                } else if (event.mediaUri != null && event.uploadStatus == UploadStatus.UPLOADED && !mediaExists) {
+                    DeletedMediaPlaceholder("Image uploaded and deleted locally")
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
 
-            if (audioExists && event.audioUri != null) {
-                AudioPlayer(uriString = event.audioUri!!)
-                Spacer(modifier = Modifier.height(12.dp))
-            } else if (event.audioUri != null && event.uploadStatus == UploadStatus.UPLOADED && !audioExists) {
-                DeletedMediaPlaceholder("Audio uploaded and deleted locally")
-                Spacer(modifier = Modifier.height(12.dp))
+                if (audioExists && event.audioUri != null) {
+                    AudioPlayer(uriString = event.audioUri!!)
+                    Spacer(modifier = Modifier.height(12.dp))
+                } else if (event.audioUri != null && event.uploadStatus == UploadStatus.UPLOADED && !audioExists) {
+                    DeletedMediaPlaceholder("Audio uploaded and deleted locally")
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
             }
 
             if (event.sensorType == SensorType.MICROPHONE) {

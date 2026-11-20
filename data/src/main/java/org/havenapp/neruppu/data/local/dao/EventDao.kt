@@ -39,6 +39,7 @@ interface EventDao {
             OR (:filter = 'Motion' AND sensorType IN ('CAMERA_MOTION', 'ACCELEROMETER'))
             OR (:filter = 'Sound'  AND sensorType = 'MICROPHONE')
             OR (:filter = 'Light'  AND sensorType = 'LIGHT')
+            OR (:filter = 'Media'  AND (mediaUri IS NOT NULL OR audioUri IS NOT NULL))
             OR sensorType = :filter
         ) ORDER BY timestamp DESC
     """)
