@@ -139,6 +139,8 @@ class ClearEventsWithPasswordUseCaseTest {
         }
 
         override suspend fun getPendingUploadEvents(limit: Int): List<Event> = emptyList()
+
+        override suspend fun getLastEventTimestamp(): Long? = null
     }
 
     private object FailingSensorRepository : SensorRepository {
@@ -156,5 +158,7 @@ class ClearEventsWithPasswordUseCaseTest {
         override suspend fun clearEvents(deleteFiles: Boolean) = throw IllegalStateException("clear failed")
 
         override suspend fun getPendingUploadEvents(limit: Int): List<Event> = emptyList()
+
+        override suspend fun getLastEventTimestamp(): Long? = null
     }
 }
