@@ -84,7 +84,7 @@ class MediaUploadRepositoryTest {
     }
 
     @Test
-    fun `TC-MUP-02 Telegram success updates status and deletes file`() = runBlocking {
+    fun `TC-MUP-02 Telegram success updates status and keeps local evidence`() = runBlocking {
         val event = Event(
             id = 1L,
             sensorType = SensorType.CAMERA_MOTION,
@@ -110,7 +110,7 @@ class MediaUploadRepositoryTest {
             failureReason = null
         ) }
         assertEquals(testFile.absolutePath, (payloadSlot.captured as AlertPayload.MediaAlert).mediaFile.absolutePath)
-        assertFalse(testFile.exists())
+        assertTrue(testFile.exists())
     }
 
     @Test
@@ -167,7 +167,7 @@ class MediaUploadRepositoryTest {
             uploadedAt = any(),
             failureReason = null
         ) }
-        assertFalse(testFile.exists())
+        assertTrue(testFile.exists())
     }
 
     @Test
@@ -221,7 +221,6 @@ class MediaUploadRepositoryTest {
         val result = mediaUploadRepository.uploadPendingEvents()
 
         assertTrue(result)
-        // Verify both files were deleted after successful upload
         coVerify(exactly = 2) { telegramTransport.send(any()) }
         coVerify { sensorRepository.updateEventUploadStatus(
             eventId = 1L,
@@ -230,7 +229,101 @@ class MediaUploadRepositoryTest {
             uploadedAt = any(),
             failureReason = null
         ) }
-        assertFalse(imageFile.exists())
-        assertFalse(audioFile.exists())
+        assertTrue(imageFile.exists())
+        assertTrue(audioFile.exists())
+    }
+
+    @Test
+    fun `TC-MUP-07 Failed text alert is marked failed, not uploaded`() = runBlocking {
+        val event = Event(
+            id = 1L,
+            sensorType = SensorType.ACCELEROMETER,
+            description = "Motion detected",
+            uploadStatus = UploadStatus.PENDING
+        )
+        every { alertTargetRepository.activeTarget } returns AlertTarget.TELEGRAM
+        coEvery { sensorRepository.getPendingUploadEvents(any()) } returns listOf(event)
+        coEvery { telegramTransport.send(any()) } returns Result.failure(RuntimeException("Network error"))
+        coEvery { sensorRepository.updateEventUploadStatus(any(), any(), any(), any(), any()) } just Runs
+
+        val result = mediaUploadRepository.uploadPendingEvents()
+
+        assertFalse(result)
+        coVerify { sensorRepository.updateEventUploadStatus(
+            eventId = 1L,
+            status = UploadStatus.FAILED,
+            target = "TELEGRAM",
+            uploadedAt = null,
+            failureReason = "Text alert failed: Network error"
+        ) }
+        coVerify(exactly = 0) { sensorRepository.updateEventUploadStatus(any(), UploadStatus.UPLOADED, any(), any(), any()) }
+    }
+
+    @Test
+    fun `TC-MUP-08 Image ok then audio fails, retry resends both instead of sticking`() = runBlocking {
+        val imageFile = File(tempFolder.root, "neruppu_motion_9.jpg").apply { writeBytes(byteArrayOf(1)) }
+        val audioFile = File(tempFolder.root, "neruppu_sound_9.mp4").apply { writeBytes(byteArrayOf(2)) }
+        val event = Event(
+            id = 9L,
+            sensorType = SensorType.MICROPHONE,
+            description = "Sound detected",
+            mediaUri = imageFile.absolutePath,
+            audioUri = audioFile.absolutePath,
+            uploadStatus = UploadStatus.PENDING
+        )
+        every { alertTargetRepository.activeTarget } returns AlertTarget.TELEGRAM
+        coEvery { sensorRepository.getPendingUploadEvents(any()) } returns listOf(event)
+        coEvery { sensorRepository.updateEventUploadStatus(any(), any(), any(), any(), any()) } just Runs
+        coEvery { telegramTransport.send(any()) } returnsMany listOf(
+            Result.success(Unit),                         // run 1: image
+            Result.failure(RuntimeException("timeout")),  // run 1: audio
+            Result.success(Unit),                         // run 2: image again
+            Result.success(Unit)                          // run 2: audio
+        )
+
+        assertFalse(mediaUploadRepository.uploadPendingEvents())
+        coVerify { sensorRepository.updateEventUploadStatus(9L, UploadStatus.FAILED, "TELEGRAM", null, "Audio upload failed: timeout") }
+        assertTrue(imageFile.exists())
+
+        assertTrue(mediaUploadRepository.uploadPendingEvents())
+        coVerify { sensorRepository.updateEventUploadStatus(9L, UploadStatus.UPLOADED, "TELEGRAM", any(), null) }
+    }
+
+    @Test
+    fun `TC-MUP-09 Missing media falls back to a text alert`() = runBlocking {
+        val event = Event(
+            id = 3L,
+            sensorType = SensorType.CAMERA_MOTION,
+            description = "Motion detected",
+            mediaUri = File(tempFolder.root, "gone.jpg").absolutePath,
+            uploadStatus = UploadStatus.PENDING
+        )
+        every { alertTargetRepository.activeTarget } returns AlertTarget.MATRIX
+        coEvery { sensorRepository.getPendingUploadEvents(any()) } returns listOf(event)
+        val payloadSlot = slot<AlertPayload>()
+        coEvery { matrixTransport.send(capture(payloadSlot)) } returns Result.success(Unit)
+        coEvery { sensorRepository.updateEventUploadStatus(any(), any(), any(), any(), any()) } just Runs
+
+        assertTrue(mediaUploadRepository.uploadPendingEvents())
+        assertTrue(payloadSlot.captured is AlertPayload.TextAlert)
+        coVerify { sensorRepository.updateEventUploadStatus(3L, UploadStatus.UPLOADED, "MATRIX", any(), null) }
+    }
+
+    @Test
+    fun `TC-MUP-10 Bot token in an error URL is not persisted`() = runBlocking {
+        val event = Event(id = 4L, sensorType = SensorType.LIGHT, description = "Light", uploadStatus = UploadStatus.PENDING)
+        every { alertTargetRepository.activeTarget } returns AlertTarget.TELEGRAM
+        coEvery { sensorRepository.getPendingUploadEvents(any()) } returns listOf(event)
+        coEvery { telegramTransport.send(any()) } returns Result.failure(
+            RuntimeException("Request timeout has expired [url=https://api.telegram.org/bot123:SECRET/sendMessage, timeout=60000]")
+        )
+        coEvery { sensorRepository.updateEventUploadStatus(any(), any(), any(), any(), any()) } just Runs
+
+        mediaUploadRepository.uploadPendingEvents()
+
+        coVerify { sensorRepository.updateEventUploadStatus(
+            4L, UploadStatus.FAILED, "TELEGRAM", null,
+            match { it != null && it.startsWith("Text alert failed") && !it.contains("SECRET") }
+        ) }
     }
 }

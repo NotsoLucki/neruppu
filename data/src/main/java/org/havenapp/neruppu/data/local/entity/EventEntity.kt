@@ -17,14 +17,21 @@
 
 package org.havenapp.neruppu.data.local.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import org.havenapp.neruppu.domain.model.Event
 import org.havenapp.neruppu.domain.model.SensorType
 import org.havenapp.neruppu.domain.model.UploadStatus
 import java.time.Instant
 
-@Entity(tableName = "events")
+@Entity(
+    tableName = "events",
+    // Name matches the index MIGRATION_2_3 creates, so migrated and fresh
+    // databases have the same schema and Room's validation passes.
+    indices = [Index(value = ["uploadStatusValue"], name = "index_events_upload_status")]
+)
 data class EventEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val timestamp: Instant,
@@ -35,7 +42,9 @@ data class EventEntity(
     val uploadStatusValue: Int = 1,
     val uploadTarget: String? = null,
     val uploadedAt: Long? = null,
-    val failureReason: String? = null
+    val failureReason: String? = null,
+    /** Failed delivery attempts; rows at the cap stop being retried. */
+    @ColumnInfo(defaultValue = "0") val uploadAttempts: Int = 0
 ) {
     val uploadStatus: UploadStatus get() = when (uploadStatusValue) {
         1 -> UploadStatus.PENDING

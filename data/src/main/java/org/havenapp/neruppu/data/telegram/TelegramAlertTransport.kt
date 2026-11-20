@@ -42,10 +42,9 @@ class TelegramAlertTransport @Inject constructor(
     override suspend fun send(payload: AlertPayload): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             if (!isConfigured) {
-                if (BuildConfig.DEBUG) {
-                    Log.d("TelegramAlertTransport", "Transport not configured, skipping alert")
-                }
-                return@runCatching Unit
+                // Report failure so the event stays pending instead of being
+                // marked as delivered when nothing was sent.
+                error("Telegram alerts are not configured")
             }
             if (BuildConfig.DEBUG) {
                 Log.d("TelegramAlertTransport", "Sending alert: $payload")

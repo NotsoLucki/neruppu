@@ -23,7 +23,7 @@ import androidx.room.TypeConverters
 import org.havenapp.neruppu.data.local.dao.EventDao
 import org.havenapp.neruppu.data.local.entity.EventEntity
 
-@Database(entities = [EventEntity::class], version = 3, exportSchema = false)
+@Database(entities = [EventEntity::class], version = 4, exportSchema = false)
 @TypeConverters(Converters::class)
 abstract class NeruppuDatabase : RoomDatabase() {
     abstract val eventDao: EventDao

@@ -25,6 +25,12 @@ import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 import org.havenapp.neruppu.data.local.entity.EventEntity
 
+/** Media paths of one event row, used when clearing events. */
+data class EventMediaPaths(
+    val mediaUri: String?,
+    val audioUri: String?
+)
+
 @Dao
 interface EventDao {
     @Query("""
@@ -56,13 +62,48 @@ interface EventDao {
     @Query("DELETE FROM events")
     suspend fun clearEvents()
 
-    @Query("SELECT * FROM events WHERE uploadStatusValue IN (1, 3) ORDER BY timestamp ASC LIMIT :limit")
-    suspend fun getPendingUploadEvents(limit: Int): List<EventEntity>
+    /** Newest first, so a fresh intrusion is never queued behind old failures. */
+    @Query("""
+        SELECT * FROM events
+        WHERE uploadStatusValue IN (1, 3) AND uploadAttempts < :maxAttempts
+        ORDER BY timestamp DESC LIMIT :limit
+    """)
+    suspend fun getPendingUploadEvents(limit: Int, maxAttempts: Int): List<EventEntity>
+
+    @Query("UPDATE events SET audioUri = :audioUri WHERE id = :eventId")
+    suspend fun setAudioUri(eventId: Long, audioUri: String): Int
+
+    @Query("""
+        UPDATE events SET uploadStatusValue = 2, uploadTarget = :target,
+            uploadedAt = :uploadedAt, failureReason = NULL
+        WHERE id = :eventId
+    """)
+    suspend fun markUploaded(eventId: Long, target: String?, uploadedAt: Long?): Int
+
+    @Query("""
+        UPDATE events SET uploadStatusValue = 3, uploadTarget = :target,
+            uploadedAt = NULL, failureReason = :reason, uploadAttempts = uploadAttempts + 1
+        WHERE id = :eventId
+    """)
+    suspend fun markUploadFailed(eventId: Long, target: String?, reason: String?): Int
+
+    @Query("""
+        UPDATE events SET uploadStatusValue = 1, uploadTarget = :target, failureReason = NULL
+        WHERE id = :eventId
+    """)
+    suspend fun markUploadPending(eventId: Long, target: String?): Int
+
+    @Query("SELECT mediaUri, audioUri FROM events")
+    suspend fun getAllMediaPaths(): List<EventMediaPaths>
 
     @Query("SELECT * FROM events ORDER BY timestamp DESC LIMIT 1")
     suspend fun getLastEventEntity(): EventEntity?
 
     suspend fun getLastEventTimestamp(): Long? {
         return getLastEventEntity()?.timestamp?.toEpochMilli()
+    }
+
+    companion object {
+        const val MAX_UPLOAD_ATTEMPTS = 5
     }
 }

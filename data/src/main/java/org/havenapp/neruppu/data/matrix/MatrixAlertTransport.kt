@@ -42,10 +42,9 @@ class MatrixAlertTransport @Inject constructor(
     override suspend fun send(payload: AlertPayload): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             if (!isConfigured) {
-                if (BuildConfig.DEBUG) {
-                    Log.w("MatrixAlertTransport", "Transport not configured, skipping alert.")
-                }
-                return@runCatching
+                // Report failure so the event stays pending instead of being
+                // marked as delivered when nothing was sent.
+                error("Matrix alerts are not configured")
             }
             if (BuildConfig.DEBUG) {
                 Log.d("MatrixAlertTransport", "Sending alert payload type: ${payload::class.simpleName}")

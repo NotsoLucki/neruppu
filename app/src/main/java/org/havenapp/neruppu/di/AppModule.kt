@@ -64,12 +64,20 @@ object AppModule {
             }
         }
 
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE events ADD COLUMN uploadAttempts INTEGER NOT NULL DEFAULT 0")
+                // Installs that started at v3 never got this index; the entity now declares it.
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_events_upload_status ON events (uploadStatusValue)")
+            }
+        }
+
         return Room.databaseBuilder(
             context,
             NeruppuDatabase::class.java,
             "neruppu_db"
         )
-        .addMigrations(MIGRATION_2_3)
+        .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
         .build()
     }
 
@@ -83,9 +91,10 @@ object AppModule {
     @Singleton
     fun provideSensorRepository(
         @ApplicationContext context: Context,
-        eventDao: EventDao
+        eventDao: EventDao,
+        database: NeruppuDatabase
     ): SensorRepository {
-        return SensorRepositoryImpl(context, eventDao)
+        return SensorRepositoryImpl(context, eventDao, database)
     }
 
     @Provides

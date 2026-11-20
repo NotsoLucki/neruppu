@@ -128,13 +128,13 @@ class MatrixAlertTransportTest {
     }
 
     @Test
-    fun `TC-MX-08 Skips dispatch if unconfigured`() = runBlocking {
+    fun `TC-MX-08 Fails without dispatch if unconfigured`() = runBlocking {
         every { configStore.isComplete } returns false
         val payload = AlertPayload.TextAlert(SensorType.CAMERA_MOTION, "Motion", 1000L)
 
         val result = transport.send(payload)
 
-        assertTrue(result.isSuccess)
+        assertTrue(result.isFailure)
         coVerify(exactly = 0) { apiClient.sendTextEvent(any()) }
     }
 

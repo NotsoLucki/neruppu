@@ -25,6 +25,7 @@ import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.CoroutineWorker
@@ -85,9 +86,19 @@ class MediaUploadWorker(
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
                 .build()
 
-            WorkManager.getInstance(context).enqueueUniqueWork(
+            val workManager = WorkManager.getInstance(context)
+            // A running worker drains everything pending, but this event may land
+            // after its last read, so append one follow-up run behind it. A worker
+            // that is only waiting (backoff after a failure, or no network yet) is
+            // replaced, so a new intrusion alert never sits behind an old backoff.
+            // Blocks briefly on the WorkManager database: call off the main thread.
+            val running = runCatching {
+                workManager.getWorkInfosForUniqueWork(UNIQUE_WORK_NAME).get()
+                    .any { it.state == WorkInfo.State.RUNNING }
+            }.getOrDefault(false)
+            workManager.enqueueUniqueWork(
                 UNIQUE_WORK_NAME,
-                ExistingWorkPolicy.KEEP,
+                if (running) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.REPLACE,
                 request
             )
         }
