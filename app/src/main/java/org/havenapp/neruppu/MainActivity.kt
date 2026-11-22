@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.Lifecycle
@@ -62,6 +63,7 @@ import org.havenapp.neruppu.data.prefs.GuardPrefs
 import org.havenapp.neruppu.service.MonitoringService
 import org.havenapp.neruppu.ui.components.LocalMediaLock
 import org.havenapp.neruppu.ui.components.MediaLock
+import org.havenapp.neruppu.ui.features.about.AboutScreen
 import org.havenapp.neruppu.ui.features.dashboard.DashboardScreen
 import org.havenapp.neruppu.ui.features.gallery.GalleryScreen
 import org.havenapp.neruppu.ui.features.logs.LogsScreen
@@ -277,6 +279,8 @@ class MainActivity : FragmentActivity() {
     @Composable
     private fun MainAppScreen() {
         var selectedTab by remember { mutableIntStateOf(0) }
+        // About is a sub-page of Settings; Back returns to Settings.
+        var showAbout by rememberSaveable { mutableStateOf(false) }
         val logsViewModel: LogsViewModel = hiltViewModel()
 
         val context = LocalContext.current
@@ -431,8 +435,11 @@ class MainActivity : FragmentActivity() {
                     2 -> {
                         GalleryScreen()
                     }
-                    3 -> {
+                    3 -> if (showAbout) {
+                        AboutScreen(onBack = { showAbout = false })
+                    } else {
                         SettingsScreen(
+                            onAboutClick = { showAbout = true },
                             motionEnabled = motionEnabled,
                             onMotionToggle = {
                                 motionEnabled = it

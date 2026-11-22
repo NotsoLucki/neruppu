@@ -36,6 +36,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Error
@@ -111,6 +112,7 @@ fun SettingsScreen(
     onPushAlertsToggle: (Boolean) -> Unit,
     savePhotos: Boolean,
     onSavePhotosToggle: (Boolean) -> Unit,
+    onAboutClick: () -> Unit = {},
     telegramViewModel: TelegramSettingsViewModel = hiltViewModel(),
     matrixViewModel: MatrixSettingsViewModel = hiltViewModel(),
     deletePasswordViewModel: DeletePasswordSettingsViewModel = hiltViewModel()
@@ -291,6 +293,9 @@ fun SettingsScreen(
                         onClick = { showMatrixConfig = true }
                     )
                 }
+
+                SectionTitle("About")
+                AboutSettingRow(onClick = onAboutClick)
             }
         }
     }
@@ -620,6 +625,29 @@ fun SectionTitle(text: String) {
         letterSpacing = 1.2.sp,
         modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
     )
+}
+
+@Composable
+private fun AboutSettingRow(onClick: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val version = remember { org.havenapp.neruppu.ui.features.about.readAppVersion(context) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .background(BackgroundSecondary, RoundedCornerShape(12.dp))
+            .border(0.5.dp, BorderTertiary, RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(Icons.Default.Info, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(24.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text("About Neruppu", color = TextPrimary, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+            Text("Version ${version.name} · version history", color = TextSecondary, style = MaterialTheme.typography.bodySmall)
+        }
+        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = TextSecondary)
+    }
 }
 
 @Composable

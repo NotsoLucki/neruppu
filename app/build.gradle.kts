@@ -13,8 +13,8 @@ android {
         applicationId = "org.havenapp.neruppu"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "26.28"
+        versionCode = 10
+        versionName = "26.47.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -52,6 +52,14 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    sourceSets {
+        getByName("main") {
+            // Bundle the F-Droid release notes (<versionCode>.txt) for the About
+            // page's version history, so one file per release feeds both.
+            assets.srcDir("../fastlane/metadata/org.havenapp.neruppu/en-US/changelogs")
+        }
+    }
+
     buildFeatures {
         compose = true
         buildConfig = true

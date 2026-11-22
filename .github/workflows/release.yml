@@ -43,7 +43,9 @@ jobs:
 
       - name: Generate Release Tag
         id: tag
-        run: echo "tag_name=v$(date +'%y.%V')" >> $GITHUB_OUTPUT
+        # Tag from the app's versionName so the release, the APK name and the
+        # About page all show the same version.
+        run: echo "tag_name=v$(sed -n 's/^ *versionName = \"\(.*\)\"/\1/p' app/build.gradle.kts)" >> $GITHUB_OUTPUT
 
       - name: Rename APK for Release
         run: |

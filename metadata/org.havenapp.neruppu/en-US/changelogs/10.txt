@@ -1,0 +1,9 @@
+v26.47.1 - NotsoLucki fork
+• Media tab: review photos and audio, locked by fingerprint or PIN
+• About page with version and version history
+• Settings toggles and thresholds now take effect
+• Alerts no longer get stuck, or marked sent when they failed
+• Stopping from the lock screen needs unlock; you're alerted when guarding stops
+• Guarding resumes after a system restart
+• Motion detection covers the whole frame
+• Reliability, battery and storage fixes
