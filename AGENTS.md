@@ -60,11 +60,13 @@ Remote alerts are sent via the **Matrix Protocol** using a lightweight Ktor-base
 - **Status**: ⚠️ Acceptable - this alpha has been stable for a long time
 - **Impact**: Low risk, monitor for edge cases
 
-### 3. Missing Signing Configuration
-- **File**: `app/build.gradle.kts`
+### 3. Missing Signing Configuration - RESOLVED (fork) ✅
+- **File**: `.github/workflows/release.yml`
 - **Issue**: No signingConfig for release build
-- **Fix**: Add signing configuration for Play Store deployment
-- **Impact**: Cannot generate signed release APK/AAB
+- **Fix**: Release APKs are signed in CI by `r0adkll/sign-android-release` using the
+  `SIGNING_KEY`, `ALIAS`, `KEY_STORE_PASSWORD` and `KEY_PASSWORD` repository secrets
+  (PKCS12 keystore, RSA 4096). The keystore itself is kept outside the repo.
+- **Impact**: Pushes to `main` publish a signed release APK
 
 ## ⚠️ PERFORMANCE ISSUES
 
